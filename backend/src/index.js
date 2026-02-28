@@ -2,6 +2,11 @@ import express from 'express'
 import { createServer } from 'http'
 import { Server } from 'socket.io'
 import cors from 'cors'
+import { exec } from 'child_process'
+import { promisify } from 'util'
+import fs from 'fs/promises'
+
+const execAsync = promisify(exec)
 
 const app = express()
 const httpServer = createServer(app)
@@ -15,104 +20,121 @@ const io = new Server(httpServer, {
 app.use(cors())
 app.use(express.json())
 
-// 模拟数据 - 议员状态
-const agents = [
-  {
-    id: 'orchestrator',
-    name: '议长',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'backend',
-    name: '后端议员',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'frontend',
-    name: '前端议员',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'qa',
-    name: '测试议员',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'devops',
-    name: '运维议员',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  },
-  {
-    id: 'reporter',
-    name: '报告议员',
-    status: 'idle',
-    currentTask: '等待任务',
-    progress: 0,
-    startedAt: null,
-    updatedAt: new Date().toISOString()
-  }
+// OpenClaw 配置文件路径
+const SESSIONS_FILE = '/home/orangepi/.openclaw/agents/orchestrator/sessions/sessions.json'
+const PROJECT_CONFIG = '/home/orangepi/.openclaw/workspace/ai-parliament/config/project.json'
+
+// 议员定义
+const AGENTS = [
+  { id: 'orchestrator', name: '议长', icon: '🏛️' },
+  { id: 'backend', name: '后端议员', icon: '⚙️' },
+  { id: 'frontend', name: '前端议员', icon: '🎨' },
+  { id: 'qa', name: '测试议员', icon: '🧪' },
+  { id: 'devops', name: '运维议员', icon: '🚀' },
+  { id: 'reporter', name: '报告议员', icon: '📊' },
 ]
 
-// 任务历史
-const taskHistory = []
+// 获取真实状态
+async function getAgentStatus(agentId) {
+  try {
+    // 读取 sessions 文件
+    const sessionsData = await fs.readFile(SESSIONS_FILE, 'utf-8')
+    const sessions = JSON.parse(sessionsData)
+    
+    // 查找当前活跃会话
+    const activeSession = Object.values(sessions).find(s => 
+      s.modelProvider && s.model
+    )
+    
+    if (!activeSession) {
+      return { status: 'offline', currentTask: '未启动', progress: 0 }
+    }
+    
+    // 判断是否为议长
+    if (agentId === 'orchestrator') {
+      const tokens = activeSession.contextTokens || 200000
+      const used = activeSession.systemPromptReport?.systemPrompt?.chars || 0
+      const usage = Math.round((used / tokens) * 100)
+      
+      return {
+        status: 'running',
+        currentTask: '调度任务中',
+        progress: Math.min(usage, 100),
+        model: activeSession.model,
+        provider: activeSession.modelProvider,
+        sessionId: activeSession.sessionId
+      }
+    }
+    
+    // 其他议员 - 检查是否有子代理会话
+    const subagentSession = Object.values(sessions).find(s => 
+      s.sessionKey && s.sessionKey.includes(agentId)
+    )
+    
+    if (subagentSession) {
+      return {
+        status: 'running',
+        currentTask: '执行任务',
+        progress: 50,
+        model: subagentSession.model,
+        sessionId: subagentSession.sessionId
+      }
+    }
+    
+    return { status: 'idle', currentTask: '等待任务', progress: 0 }
+    
+  } catch (error) {
+    console.error(`Error getting status for ${agentId}:`, error.message)
+    return { status: 'offline', currentTask: '未连接', progress: 0 }
+  }
+}
+
+// 获取所有议员状态
+async function getAllAgentStatus() {
+  const results = await Promise.all(
+    AGENTS.map(async (agent) => {
+      const status = await getAgentStatus(agent.id)
+      return {
+        id: agent.id,
+        name: agent.name,
+        icon: agent.icon,
+        ...status,
+        updatedAt: new Date().toISOString()
+      }
+    })
+  )
+  return results
+}
 
 // API: 获取所有议员状态
-app.get('/api/agents', (req, res) => {
-  res.json(agents)
+app.get('/api/agents', async (req, res) => {
+  try {
+    const agents = await getAllAgentStatus()
+    res.json(agents)
+  } catch (error) {
+    console.error('Error:', error)
+    res.status(500).json({ error: error.message })
+  }
 })
 
 // API: 获取指定议员详情
-app.get('/api/agents/:id', (req, res) => {
-  const agent = agents.find(a => a.id === req.params.id)
-  if (!agent) {
-    return res.status(404).json({ error: 'Agent not found' })
+app.get('/api/agents/:id', async (req, res) => {
+  try {
+    const agent = await getAgentStatus(req.params.id)
+    res.json(agent)
+  } catch (error) {
+    res.status(500).json({ error: error.message })
   }
-  res.json(agent)
 })
 
 // API: 获取任务历史
 app.get('/api/tasks', (req, res) => {
-  res.json(taskHistory)
+  res.json([])
 })
 
-// API: 更新议员状态 (供测试使用)
-app.post('/api/agents/:id/status', (req, res) => {
-  const { status, currentTask, progress } = req.body
-  const agent = agents.find(a => a.id === req.params.id)
-  
-  if (!agent) {
-    return res.status(404).json({ error: 'Agent not found' })
-  }
-  
-  agent.status = status
-  if (currentTask !== undefined) agent.currentTask = currentTask
-  if (progress !== undefined) agent.progress = progress
-  agent.updatedAt = new Date().toISOString()
-  
-  // 广播更新
-  io.emit('agentUpdate', agent)
-  
-  res.json(agent)
+// API: 健康检查
+app.get('/api/health', (req, res) => {
+  res.json({ status: 'ok', timestamp: new Date().toISOString() })
 })
 
 // WebSocket 连接
@@ -120,51 +142,22 @@ io.on('connection', (socket) => {
   console.log('Client connected:', socket.id)
   
   // 发送当前所有状态
-  socket.emit('init', agents)
+  getAllAgentStatus().then(agents => {
+    socket.emit('init', agents)
+  })
   
   socket.on('disconnect', () => {
     console.log('Client disconnected:', socket.id)
   })
 })
 
-// 模拟任务执行 (用于演示)
-function simulateTasks() {
-  const randomAgent = agents[Math.floor(Math.random() * agents.length)]
-  
-  if (randomAgent.status === 'idle') {
-    randomAgent.status = 'running'
-    randomAgent.currentTask = `任务-${Date.now().toString().slice(-4)}`
-    randomAgent.progress = 0
-    randomAgent.startedAt = new Date().toISOString()
-    io.emit('agentUpdate', randomAgent)
-  } else if (randomAgent.status === 'running') {
-    randomAgent.progress += Math.floor(Math.random() * 30) + 10
-    
-    if (randomAgent.progress >= 100) {
-      taskHistory.push({
-        ...randomAgent,
-        completedAt: new Date().toISOString()
-      })
-      randomAgent.status = 'completed'
-      randomAgent.progress = 100
-      io.emit('agentUpdate', randomAgent)
-      
-      // 1秒后重置为空闲
-      setTimeout(() => {
-        randomAgent.status = 'idle'
-        randomAgent.currentTask = '等待任务'
-        randomAgent.progress = 0
-        randomAgent.startedAt = null
-        io.emit('agentUpdate', randomAgent)
-      }, 2000)
-    } else {
-      io.emit('agentUpdate', randomAgent)
-    }
-  }
+// 每 3 秒更新状态
+async function updateStatus() {
+  const agents = await getAllAgentStatus()
+  io.emit('agentsUpdate', agents)
 }
 
-// 每3秒模拟一次任务变化 (仅用于演示)
-setInterval(simulateTasks, 3000)
+setInterval(updateStatus, 3000)
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, () => {
