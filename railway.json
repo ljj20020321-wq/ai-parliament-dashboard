@@ -1,0 +1,23 @@
+{
+  "$schema": "https://railway.app/schema.json",
+  "name": "ai-parliament-dashboard",
+  "services": {
+    "frontend": {
+      "build": {
+        "dockerfile": "frontend/Dockerfile",
+        "context": "."
+      },
+      "port": 80,
+      "routes": {
+        "/": "/"
+      }
+    },
+    "backend": {
+      "build": {
+        "dockerfile": "backend/Dockerfile",
+        "context": "."
+      },
+      "port": 3001
+    }
+  }
+}
