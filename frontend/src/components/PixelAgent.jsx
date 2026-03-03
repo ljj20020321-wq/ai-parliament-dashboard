@@ -1,35 +1,40 @@
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 
-// 像素小人的颜色配置
+// 像素小人的颜色配置 - 每个 Agent 不同颜色
 const AGENT_COLORS = {
-  orchestrator: { body: '#9333ea', head: '#c084fc' },  // 紫色 - 议长
-  backend: { body: '#3b82f6', head: '#60a5fa' },       // 蓝色 - 后端
-  frontend: { body: '#ec4899', head: '#f9a8d4' },     // 粉色 - 前端
-  qa: { body: '#f59e0b', head: '#fbbf24' },           // 黄色 - 测试
-  devops: { body: '#10b981', head: '#34d399' },      // 绿色 - 运维
-  reporter: { body: '#8b5cf6', head: '#a78bfa' },    // 紫色 - 报告
+  orchestrator: { body: '#8b5cf6', head: '#a78bfa', name: '议长' },    // 紫色
+  backend: { body: '#3b82f6', head: '#60a5fa', name: '后端' },        // 蓝色
+  frontend: { body: '#ec4899', head: '#f9a8d4', name: '前端' },       // 粉色
+  qa: { body: '#f59e0b', head: '#fbbf24', name: '测试' },             // 黄色
+  devops: { body: '#10b981', head: '#34d399', name: '运维' },         // 绿色
+  reporter: { body: '#06b6d4', head: '#22d3ee', name: '报告' },       // 青色
 }
 
-// 状态动画配置
-const STATUS_ANIMATION = {
-  running: { type: 'work', speed: 200 },
-  thinking: { type: 'think', speed: 500 },
-  idle: { type: 'walk', speed: 800 },
-  error: { type: 'fall', speed: 0 },
-  waiting: { type: 'idle', speed: 1000 },
+// 状态对应的动画
+const STATUS_CONFIG = {
+  running: { action: 'typing', emoji: '⌨️' },
+  thinking: { action: 'thinking', emoji: '💭' },
+  idle: { action: 'walking', emoji: '🚶' },
+  error: { action: 'fallen', emoji: '😵' },
+  waiting: { action: 'waiting', emoji: '⏳' },
+  offline: { action: 'gone', emoji: '' },
 }
 
 function PixelAgent({ agent, status, task, zone, index }) {
   const [frame, setFrame] = useState(0)
   const [position, setPosition] = useState({ x: 0, y: 0 })
   const colors = AGENT_COLORS[agent.id] || { body: '#6b7280', head: '#9ca3af' }
-  const animation = STATUS_ANIMATION[status] || STATUS_ANIMATION.idle
+  const statusConfig = STATUS_CONFIG[status] || STATUS_CONFIG.offline
+  
+  // 动画帧数
+  const frameCount = status === 'running' ? 4 : status === 'idle' ? 4 : 1
 
   // 随机初始位置（在区域内）
   useEffect(() => {
-    const baseX = zone.x + 5 + (index * 8) % (zone.width - 15)
-    const baseY = zone.y + 10 + Math.floor(index / 3) * 20
-    setPosition({ x: baseX, y: baseY })
+    const margin = 10
+    const x = zone.x + margin + (index * 12) % (zone.width - margin * 2 - 10)
+    const y = zone.y + 15 + Math.floor(index / 2) * 20
+    setPosition({ x, y })
   }, [zone, index])
 
   // 动画循环
@@ -37,119 +42,133 @@ function PixelAgent({ agent, status, task, zone, index }) {
     if (status === 'offline' || status === 'error') return
     
     const interval = setInterval(() => {
-      setFrame(f => (f + 1) % 4)
-    }, animation.speed)
+      setFrame(f => (f + 1) % frameCount)
+    }, status === 'running' ? 150 : status === 'thinking' ? 400 : 600)
     
     return () => clearInterval(interval)
-  }, [status, animation.speed])
+  }, [status, frameCount])
 
-  // 计算抖动偏移（模拟动作）
+  // 偏移计算
   const getOffset = () => {
-    if (status === 'running') {
-      return { x: (frame % 2) * 2, y: frame < 2 ? -2 : 0 }
+    switch (status) {
+      case 'running':  // 打字动画
+        return { x: frame % 2 ? -1 : 1, y: 0 }
+      case 'thinking': // 思考上下浮动
+        return { x: 0, y: frame % 2 ? -3 : 0 }
+      case 'idle':     // 走路左右移动
+        return { x: Math.sin(frame * Math.PI / 2) * 4, y: 0 }
+      default:
+        return { x: 0, y: 0 }
     }
-    if (status === 'thinking') {
-      return { x: 0, y: Math.sin(frame * Math.PI / 2) * 3 }
-    }
-    if (status === 'idle') {
-      return { x: Math.sin(frame * Math.PI / 2) * 5, y: 0 }
-    }
-    return { x: 0, y: 0 }
   }
 
   const offset = getOffset()
 
-  // 气泡显示任务
-  const showBubble = status === 'running' || status === 'thinking' || status === 'error'
+  // 离线不显示
+  if (status === 'offline') return null
 
   return (
     <div
-      className="absolute transition-all duration-300"
+      className="absolute transition-all duration-200"
       style={{
         left: (position.x + offset.x) + '%',
         top: (position.y + offset.y) + '%',
         transform: 'translate(-50%, -50%)',
+        zIndex: 10 + index
       }}
     >
-      {/* 气泡 */}
-      {showBubble && (
-        <div className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap">
+      {/* 任务气泡 */}
+      {(status === 'running' || status === 'thinking') && (
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2 whitespace-nowrap">
           <div className={`
-            text-xs px-2 py-1 rounded-lg mb-1
-            ${status === 'running' ? 'bg-blue-600 text-white' : ''}
-            ${status === 'thinking' ? 'bg-yellow-600 text-white' : ''}
-            ${status === 'error' ? 'bg-red-600 text-white' : ''}
+            text-xs px-2 py-1 rounded-lg mb-1 font-mono
+            ${status === 'running' ? 'bg-blue-600/90 text-white' : ''}
+            ${status === 'thinking' ? 'bg-yellow-600/90 text-white' : ''}
           `}>
-            {task.length > 15 ? task.substring(0, 15) + '...' : task}
+            {statusConfig.emoji} {task.length > 12 ? task.substring(0, 12) + '..' : task}
           </div>
-          {/* 气泡小三角 */}
           <div className={`
             absolute left-1/2 -translate-x-1/2 -bottom-1 w-2 h-2 rotate-45
-            ${status === 'running' ? 'bg-blue-600' : ''}
-            ${status === 'thinking' ? 'bg-yellow-600' : ''}
-            ${status === 'error' ? 'bg-red-600' : ''}
+            ${status === 'running' ? 'bg-blue-600/90' : 'bg-yellow-600/90'}
           `}></div>
         </div>
       )}
 
-      {/* 像素小人 */}
-      <div className="relative">
+      {/* 错误气泡 */}
+      {status === 'error' && (
+        <div className="absolute -top-10 left-1/2 -translate-x-1/2">
+          <div className="text-xs px-2 py-1 rounded-lg mb-1 bg-red-600/90 text-white font-mono">
+            😵 {task}
+          </div>
+        </div>
+      )}
+
+      {/* 像素小人容器 */}
+      <div className={`
+        relative w-8 h-10
+        ${status === 'error' ? 'opacity-50 rotate-12' : ''}
+      `}>
         {/* 头部 */}
         <div 
-          className="w-6 h-6 rounded-sm"
+          className="absolute top-0 left-1/2 -translate-x-1/2 w-5 h-5 rounded-sm"
           style={{ 
             backgroundColor: colors.head,
-            boxShadow: status === 'error' ? '0 0 10px red' : 'none'
+            boxShadow: status === 'error' ? '0 0 8px red' : 'none'
           }}
         >
-          {/* 眼睛 */}
-          <div className="absolute top-1.5 left-1 w-1 h-1 bg-white rounded-sm"></div>
-          <div className="absolute top-1.5 right-1 w-1 h-1 bg-white rounded-sm"></div>
-          
-          {/* 状态特殊效果 */}
-          {status === 'thinking' && (
-            <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs">💭</div>
-          )}
-          {status === 'error' && (
-            <div className="absolute -top-2 left-1/2 -translate-x-1/2 text-xs">😵</div>
-          )}
-          {status === 'running' && (
-            <div className="absolute top-0.5 left-1/2 -translate-x-1/2">
-              <div className="w-1 h-1 bg-white rounded-full animate-ping"></div>
-            </div>
+          {/* 眼睛 - 根据状态变化 */}
+          {status === 'thinking' ? (
+            <>
+              <div className="absolute top-1.5 left-0.5 w-1 h-1 bg-white rounded-sm"></div>
+              <div className="absolute top-1.5 right-0.5 w-1 h-1 bg-white rounded-sm"></div>
+              {/* 思考云 */}
+              <div className="absolute -top-4 -right-4 text-xs animate-bounce">💭</div>
+            </>
+          ) : status === 'error' ? (
+            <>
+              <div className="absolute top-2 left-0.5 w-1.5 h-0.5 bg-white rotate-45"></div>
+              <div className="absolute top-2 right-0.5 w-1.5 h-0.5 bg-white -rotate-45"></div>
+            </>
+          ) : (
+            <>
+              <div className="absolute top-1.5 left-0.5 w-1 h-1 bg-white rounded-sm"></div>
+              <div className="absolute top-1.5 right-0.5 w-1 h-1 bg-white rounded-sm"></div>
+            </>
           )}
         </div>
         
         {/* 身体 */}
         <div 
-          className="w-4 h-4 mx-auto -mt-1 rounded-sm"
-          style={{ 
-            backgroundColor: colors.body,
-            opacity: status === 'error' ? 0.5 : 1
-          }}
-        ></div>
+          className="absolute top-4 left-1/2 -translate-x-1/2 w-4 h-3 rounded-sm"
+          style={{ backgroundColor: colors.body }}
+        >
+          {/* 工作中显示键盘 */}
+          {status === 'running' && (
+            <div className="absolute -bottom-1 left-1/2 -translate-x-1/2 text-xs">⌨️</div>
+          )}
+        </div>
         
         {/* 腿 */}
-        <div className="flex justify-center gap-1 -mt-0.5">
+        <div className="absolute top-7 left-1/2 -translate-x-1/2 flex gap-1">
           <div 
             className="w-1.5 h-2 rounded-sm"
             style={{ 
               backgroundColor: colors.body,
-              transform: status === 'running' ? `translateY(${(frame % 2) * -2}px)` : 'none'
+              transform: status === 'idle' ? `translateY(${frame % 2 ? -2 : 0}px)` : 'none'
             }}
           ></div>
           <div 
             className="w-1.5 h-2 rounded-sm"
             style={{ 
               backgroundColor: colors.body,
-              transform: status === 'running' ? `translateY(${(frame + 1) % 2 * -2}px)` : 'none'
+              transform: status === 'idle' ? `translateY(${(frame + 1) % 2 ? -2 : 0}px)` : 'none'
             }}
           ></div>
         </div>
       </div>
 
       {/* 名字标签 */}
-      <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-xs text-white whitespace-nowrap bg-black/50 px-1 rounded">
+      <div className="absolute -bottom-5 left-1/2 -translate-x-1/2 text-xs text-white/80 whitespace-nowrap bg-black/40 px-1.5 py-0.5 rounded">
         {agent.icon} {agent.name}
       </div>
     </div>
