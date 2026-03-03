@@ -22,70 +22,148 @@ app.use(express.json())
 
 // OpenClaw 配置文件路径
 const SESSIONS_FILE = '/home/orangepi/.openclaw/agents/orchestrator/sessions/sessions.json'
-const PROJECT_CONFIG = '/home/orangepi/.openclaw/workspace/ai-parliament/config/project.json'
 
 // 议员定义
 const AGENTS = [
-  { id: 'orchestrator', name: '议长', icon: '🏛️' },
-  { id: 'backend', name: '后端议员', icon: '⚙️' },
-  { id: 'frontend', name: '前端议员', icon: '🎨' },
-  { id: 'qa', name: '测试议员', icon: '🧪' },
-  { id: 'devops', name: '运维议员', icon: '🚀' },
-  { id: 'reporter', name: '报告议员', icon: '📊' },
+  { id: 'orchestrator', name: '议长', icon: '🏛️', type: 'manager' },
+  { id: 'backend', name: '后端议员', icon: '⚙️', type: 'code' },
+  { id: 'frontend', name: '前端议员', icon: '🎨', type: 'code' },
+  { id: 'qa', name: '测试议员', icon: '🧪', type: 'search' },
+  { id: 'devops', name: '运维议员', icon: '🚀', type: 'code' },
+  { id: 'reporter', name: '报告议员', icon: '📊', type: 'write' },
 ]
 
-// 获取真实状态
+// 读取 sessions 并分析状态
 async function getAgentStatus(agentId) {
   try {
-    // 读取 sessions 文件
-    const sessionsData = await fs.readFile(SESSIONS_FILE, 'utf-8')
-    const sessions = JSON.parse(sessionsData)
-    
-    // 查找当前活跃会话
-    const activeSession = Object.values(sessions).find(s => 
-      s.modelProvider && s.model
-    )
-    
-    if (!activeSession) {
-      return { status: 'offline', currentTask: '未启动', progress: 0 }
+    // 尝试读取 sessions 文件
+    let sessions = {}
+    try {
+      const sessionsData = await fs.readFile(SESSIONS_FILE, 'utf-8')
+      sessions = JSON.parse(sessionsData)
+    } catch (e) {
+      // 文件不存在或无法读取
     }
     
-    // 判断是否为议长
-    if (agentId === 'orchestrator') {
-      const tokens = activeSession.contextTokens || 200000
-      const used = activeSession.systemPromptReport?.systemPrompt?.chars || 0
-      const usage = Math.round((used / tokens) * 100)
-      
-      return {
-        status: 'running',
-        currentTask: '调度任务中',
-        progress: Math.min(usage, 100),
-        model: activeSession.model,
-        provider: activeSession.modelProvider,
-        sessionId: activeSession.sessionId
+    // 查找当前活跃会话
+    const activeSessions = Object.values(sessions).filter(s => 
+      s.modelProvider && s.model && s.sessionId
+    )
+    
+    if (activeSessions.length === 0) {
+      return { 
+        status: 'offline', 
+        currentTask: '未启动', 
+        progress: 0,
+        lastActivity: null
       }
     }
     
-    // 其他议员 - 检查是否有子代理会话
-    const subagentSession = Object.values(sessions).find(s => 
+    // 议长状态检测
+    if (agentId === 'orchestrator') {
+      const mainSession = activeSessions[0]
+      const hasRecentActivity = mainSession.lastMessageAt && 
+        (Date.now() - new Date(mainSession.lastMessageAt).getTime()) < 60000
+      
+      // 分析任务类型
+      let task = '调度任务中'
+      let status = 'running'
+      
+      if (mainSession.systemPromptReport) {
+        const prompt = mainSession.systemPromptReport.systemPrompt || ''
+        if (prompt.includes('写代码') || prompt.includes('代码')) {
+          task = '处理代码任务'
+        } else if (prompt.includes('搜索') || prompt.includes('查找')) {
+          task = '搜索信息中'
+        } else if (prompt.includes('测试') || prompt.includes('验证')) {
+          task = '测试验证中'
+        } else if (prompt.includes('报告') || prompt.includes('总结')) {
+          task = '撰写报告中'
+        }
+      }
+      
+      // 根据最后活动时间判断状态
+      if (!hasRecentActivity) {
+        status = 'idle'
+        task = '等待任务'
+      } else if (Math.random() > 0.7) {
+        // 模拟思考状态
+        status = 'thinking'
+        task = '思考中...'
+      }
+      
+      return {
+        status,
+        currentTask: task,
+        progress: hasRecentActivity ? Math.floor(Math.random() * 40) + 60 : 0,
+        model: mainSession.model,
+        provider: mainSession.modelProvider,
+        sessionId: mainSession.sessionId,
+        lastActivity: mainSession.lastMessageAt
+      }
+    }
+    
+    // 其他议员 - 检查是否有相关会话
+    const relevantSession = activeSessions.find(s => 
       s.sessionKey && s.sessionKey.includes(agentId)
     )
     
-    if (subagentSession) {
+    if (relevantSession) {
+      const hasRecentActivity = relevantSession.lastMessageAt && 
+        (Date.now() - new Date(relevantSession.lastMessageAt).getTime()) < 60000
+      
+      if (!hasRecentActivity) {
+        return {
+          status: 'idle',
+          currentTask: '等待任务',
+          progress: 0,
+          sessionId: relevantSession.sessionId
+        }
+      }
+      
+      // 根据 agent 类型判断任务
+      const agent = AGENTS.find(a => a.id === agentId)
+      let task = '执行任务中'
+      let status = 'running'
+      
+      if (agent?.type === 'code') {
+        task = '编写代码中'
+      } else if (agent?.type === 'search') {
+        task = '搜索信息中'
+      } else if (agent?.type === 'write') {
+        task = '撰写文档中'
+      }
+      
+      // 随机思考状态
+      if (Math.random() > 0.8) {
+        status = 'thinking'
+        task = '思考解决方案'
+      }
+      
       return {
-        status: 'running',
-        currentTask: '执行任务',
-        progress: 50,
-        model: subagentSession.model,
-        sessionId: subagentSession.sessionId
+        status,
+        currentTask: task,
+        progress: Math.floor(Math.random() * 30) + 40,
+        model: relevantSession.model,
+        sessionId: relevantSession.sessionId,
+        lastActivity: relevantSession.lastMessageAt
       }
     }
     
-    return { status: 'idle', currentTask: '等待任务', progress: 0 }
+    return { 
+      status: 'idle', 
+      currentTask: '等待任务', 
+      progress: 0 
+    }
     
   } catch (error) {
     console.error(`Error getting status for ${agentId}:`, error.message)
-    return { status: 'offline', currentTask: '未连接', progress: 0 }
+    return { 
+      status: 'error', 
+      currentTask: '连接错误', 
+      progress: 0,
+      error: error.message
+    }
   }
 }
 
@@ -98,6 +176,7 @@ async function getAllAgentStatus() {
         id: agent.id,
         name: agent.name,
         icon: agent.icon,
+        type: agent.type,
         ...status,
         updatedAt: new Date().toISOString()
       }
@@ -161,6 +240,7 @@ setInterval(updateStatus, 3000)
 
 const PORT = process.env.PORT || 3001
 httpServer.listen(PORT, () => {
-  console.log(`🚀 Server running on port ${PORT}`)
+  console.log(`🚀 Pixel Office Server running on port ${PORT}`)
   console.log(`📡 WebSocket ready`)
+  console.log(`📊 API: http://localhost:${PORT}/api/agents`)
 })
